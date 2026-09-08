@@ -1,5 +1,7 @@
-# Personal memory is local by default — uncomment to publish it too.
+# Personal memory is local by default — remove these lines to publish it too.
+memory/log.md
 memory/memory.md
+memory/.reorg-count
 
 # OS / editor cruft
 .DS_Store

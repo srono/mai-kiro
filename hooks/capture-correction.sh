@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # capture-correction.sh — UserPromptSubmit hook.
-# If the user's message looks like a correction, append it to memory/memory.md.
+# If the user's message looks like a correction or standing preference, append it
+# (raw) to the append-only memory log. No keyword extraction, no matching — the
+# reorg step (an agent action) is what turns this log into a consolidated doc.
 # Always exits 0 (never blocks the prompt).
 #
-# Format written:  YYYY-MM-DD | keyword,list | correction text
+# Format written:  YYYY-MM-DDTHH:MM:SS | raw text
 
 set -euo pipefail
 
@@ -12,42 +14,33 @@ MSG=$(printf '%s' "$INPUT" | jq -r '.prompt // ""' 2>/dev/null || echo "")
 [ -z "$MSG" ] && exit 0
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MEM="$SCRIPT_DIR/../memory/memory.md"
-[ -f "$MEM" ] || exit 0
+LOG="$SCRIPT_DIR/../memory/log.md"
+[ -f "$LOG" ] || exit 0
 
-# Only capture single-line-ish corrections; skip long pasted blocks.
+# Skip long pasted blocks — corrections/preferences are short.
 LINE_COUNT=$(printf '%s' "$MSG" | wc -l | tr -d ' ')
 [ "$LINE_COUNT" -gt 4 ] && exit 0
 
-# Correction signals (case-insensitive). Add your own phrases here.
-CORRECTION_RE='(^|[^a-z])(no,|nope|wrong|incorrect|not (like )?that|don'"'"'t|do not|stop|actually,|instead|should(n'"'"'t| not)? |never |always |use .* not |prefer )'
+# Loose filter: does this look like a correction or a standing preference?
+# We only decide WHETHER to keep the line here. WHAT it means is the reorg step's
+# job — so this stays deliberately permissive.
+FILTER_RE='(^|[^a-z])(no,|nope|wrong|incorrect|not (like )?that|don'"'"'t|do not|stop( doing| using)?|actually,|instead|should(n'"'"'t| not)? |must( not)? |never |always |avoid |prefer |use .* not |from now on|going forward|remember to|make sure|by default)'
+printf '%s' "$MSG" | grep -Eiq "$FILTER_RE" || exit 0
 
-printf '%s' "$MSG" | grep -Eiq "$CORRECTION_RE" || exit 0
-
-# Skip pure questions — a "?" with no imperative is usually not a correction.
-if printf '%s' "$MSG" | grep -Eq '\?[[:space:]]*$' && ! printf '%s' "$MSG" | grep -Eiq '(don'"'"'t|do not|instead|not that|use )'; then
+# Skip pure questions (a "?" ending with no imperative signal).
+if printf '%s' "$MSG" | grep -Eq '\?[[:space:]]*$' \
+   && ! printf '%s' "$MSG" | grep -Eiq '(don'"'"'t|do not|instead|not that|use |avoid|prefer|always|never|must)'; then
   exit 0
 fi
 
-# Extract keywords: lowercase words >=4 chars, drop common stopwords, keep up to 6.
-STOP='^(the|and|for|you|your|with|that|this|dont|does|use|used|using|always|never|should|instead|actually|stop|wrong|nope|from|into|when|what|have|has|are|was|were|will|would|could|about|there|their|them|then)$'
-KEYWORDS=$(printf '%s' "$MSG" \
-  | tr '[:upper:]' '[:lower:]' \
-  | tr -cs 'a-z0-9_.-' '\n' \
-  | awk 'length($0) >= 4' \
-  | grep -Eiv "$STOP" \
-  | awk '!seen[$0]++' \
-  | head -6 \
-  | paste -sd, - 2>/dev/null || true)
-[ -z "$KEYWORDS" ] && KEYWORDS="misc"
+# Collapse to one line, trim length.
+CLEAN=$(printf '%s' "$MSG" | tr '\n' ' ' | tr -s ' ' | sed 's/^ *//;s/ *$//' | cut -c1-300)
+[ -z "$CLEAN" ] && exit 0
 
-# Collapse the message to one line and trim length.
-CLEAN=$(printf '%s' "$MSG" | tr '\n' ' ' | tr -s ' ' | sed 's/^ *//;s/ *$//' | cut -c1-200)
+# Cheap exact-dup guard against the immediately previous entry only (append-only
+# otherwise — the reorg step does real de-duplication).
+LAST=$(grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}T' "$LOG" 2>/dev/null | tail -1 | sed 's/^[^|]*| //' || true)
+[ "$LAST" = "$CLEAN" ] && exit 0
 
-# Dedup: skip if this exact text is already stored.
-if grep -Fq "| $CLEAN" "$MEM" 2>/dev/null; then
-  exit 0
-fi
-
-printf '%s | %s | %s\n' "$(date +%F)" "$KEYWORDS" "$CLEAN" >> "$MEM"
+printf '%s | %s\n' "$(date +%FT%T)" "$CLEAN" >> "$LOG"
 exit 0

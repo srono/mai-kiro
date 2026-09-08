@@ -1,17 +1,29 @@
 # Memory (example)
 
-This is a template showing the format. The live file is `memory/memory.md`,
-which is git-ignored by default so your personal corrections stay local.
+The **consolidated** memory document. This is what the agent reads at the start
+of a session. It is rewritten by the reorg step (an agent action) from the
+append-only `log.md`, so that newer findings supersede older ones and duplicates
+are merged. Keep it short, current, and readable.
 
-Entry format — one per line:
+This is a derived view — if it is ever wrong, it can be rebuilt from `log.md`.
 
-    YYYY-MM-DD | keyword,comma,list | the correction text
+Suggested structure (the reorg step maintains this):
 
-Examples:
+## Preferences
 
-    2026-01-15 | sed,json,jq | don't use sed to edit JSON, use jq instead
-    2026-01-16 | pytest,tests | always run pytest with --tb=short
-    2026-01-18 | commit,message | keep commit subjects under 70 chars
+- Prefer tabs over spaces in this repo.
+- Keep commit subjects under 70 characters.
 
-`capture-correction.sh` appends here automatically; `inject-memory.sh` reads it.
-To publish your memory with the repo, remove `memory/memory.md` from `.gitignore`.
+## Rules
+
+- Don't use sed to edit JSON — use jq.
+- Never commit directly to main; open a PR.
+
+## Tooling
+
+- Run pytest with `--tb=short`.
+
+---
+_Last reorg: <date> — <one-line changelog>_
+
+The live file is `memory/memory.md`, git-ignored so your entries stay local.

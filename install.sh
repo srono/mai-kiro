@@ -71,9 +71,12 @@ BASH_MATCHER="(?i)(bash|shell|execute|command)"
 
 write_hook "block-secrets" "mai-kiro: block secrets" "PreToolUse" "$BASH_MATCHER" "block-secrets.sh"
 
-# Memory — fire on every user prompt.
-write_hook "inject-memory"      "mai-kiro: inject memory"      "UserPromptSubmit" "" "inject-memory.sh"
+# Memory injection — surface the consolidated doc once at session start.
+write_hook "inject-memory" "mai-kiro: inject memory" "SessionStart" "" "inject-memory.sh"
+
+# Memory capture + reorg throttle — fire on every user prompt.
 write_hook "capture-correction" "mai-kiro: capture correction" "UserPromptSubmit" "" "capture-correction.sh"
+write_hook "reorg-check"        "mai-kiro: reorg check"        "UserPromptSubmit" "" "reorg-check.sh"
 
 echo ""
 echo "✅ Done. Restart your Kiro CLI session to load the hooks."
