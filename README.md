@@ -1,76 +1,81 @@
 # mai-kiro
 
-A deliberately small framework that gives the [Kiro CLI](https://kiro.dev) agent two things it lacks by default:
+Three small hooks for the [Kiro CLI](https://kiro.dev) agent that fix two problems Kiro doesn't fully solve on its own:
 
-1. **Enforcement it cannot skip** — a few hard hooks that block genuinely dangerous actions (secret commits, destructive commands, writes outside the workspace). Code enforces; prompts only suggest.
-2. **Memory that survives sessions** — corrections you make are captured to a file and the relevant ones are injected back into future prompts.
+1. **Secrets leaking into git.** Kiro will *flag* a suspicious file, but nothing hard-blocks a commit whose staged diff contains an actual key. `block-secrets.sh` scans the staged diff and `exit 2`s the commit/push. A leaked credential in git history is expensive and hard to undo — this is the one place a deterministic wall clearly beats an advisory prompt.
 
-That's it. No codegen, no symlink indirection, no 19-hook sprawl. Three hooks and one memory file. Grow it when a real failure demands it — not before.
+2. **Markdown sprawl.** The agent tends to spawn a new `notes.md` / `plan.md` / `summary.md` every time you correct it, and they rot. `capture-correction.sh` + `inject-memory.sh` funnel your corrections into **one** plain-text memory file and surface the relevant lines back into future prompts — instead of scattering stale docs across the repo.
 
-> Inspired by the ideas in [oh-my-kiro](https://github.com/KaimingWan/oh-my-kiro), rebuilt minimal and personalizable.
+Deliberately tiny. No codegen, no symlink indirection, no workflow engine. Three hooks and one memory file. Grow it when a real failure demands it.
 
-## Philosophy
-
-- **If code can enforce it, don't ask a prompt to.** A prompt that says "never commit secrets" is followed probabilistically. A hook that `exit 2`s on a secret is followed every time.
-- **Small over complete.** Every hook is a thing that can also wrongly block you. Keep the set tiny and honest about its limits.
-- **Memory is a tool, not magic.** This captures your corrections and surfaces them again. It does not "learn" — it remembers. That's enough to be useful.
+> Inspired by ideas in [oh-my-kiro](https://github.com/KaimingWan/oh-my-kiro), rebuilt minimal and personalizable. This intentionally drops the pieces (dangerous-command and outside-workspace blockers) that mostly duplicate Kiro's built-in safety behavior — Kiro already pauses on `rm -rf`, `curl | bash`, and writes outside the workspace.
 
 ## What's inside
 
 ```
 mai-kiro/
 ├── hooks/
-│   ├── block-secrets.sh          # PreToolUse: blocks committing/pushing obvious secrets
-│   ├── block-dangerous.sh        # PreToolUse: blocks rm -rf /, curl|bash, etc.
-│   ├── block-outside-workspace.sh# PreToolUse: blocks writes outside the workspace
-│   ├── capture-correction.sh     # UserPromptSubmit: detects corrections, appends to memory
-│   └── inject-memory.sh          # UserPromptSubmit: surfaces relevant past memory
+│   ├── block-secrets.sh          # PreToolUse: hard-blocks git commit/push when the staged diff has secrets
+│   ├── capture-correction.sh     # UserPromptSubmit: detects corrections, appends them to one memory file
+│   └── inject-memory.sh          # UserPromptSubmit: surfaces the most relevant past corrections
 ├── memory/
-│   └── memory.md                 # your persisted corrections (git-ignored by default)
-├── install.sh                    # wires hooks into .kiro/hooks
+│   └── memory.example.md         # format template (your live memory.md is git-ignored)
+├── install.sh / uninstall.sh
 ├── LICENSE
 └── README.md
 ```
 
 ## Install
 
-From inside the project where you want the agent enhanced:
+From the project you want to enhance:
 
 ```bash
 git clone https://github.com/<you>/mai-kiro.git
-bash mai-kiro/install.sh
+bash mai-kiro/install.sh          # or: bash mai-kiro/install.sh /path/to/project
 ```
 
-This writes hook definitions into `.kiro/hooks/` pointing at the scripts in this repo. Restart your Kiro CLI session to pick them up.
+This writes hook definitions into `.kiro/hooks/` pointing at the scripts in this repo. Restart your Kiro CLI session to load them. Requires `jq`.
 
-## The hooks
+To remove: `bash mai-kiro/uninstall.sh` (deletes only the `mai-kiro-*.json` files it created).
 
-### Enforcement (hard blocks)
+## The secret scanner
 
-These run on `PreToolUse` and `exit 2` to block the action. The agent sees the reason and can retry safely.
+`block-secrets.sh` runs on `PreToolUse`. It only acts when the command is a `git commit` or `git push`; then it scans `git diff --cached` against patterns for AWS keys, private keys, GitHub/Slack/OpenAI/Google tokens, and generic `secret =`/`api_key =` assignments. A match prints the reason and `exit 2`s — the commit is blocked until you remove the secret.
 
-| Hook | Blocks |
-|------|--------|
-| `block-secrets.sh` | `git commit`/`git push` when staged content matches API keys, private keys, tokens |
-| `block-dangerous.sh` | `rm -rf /`, `rm -rf ~`, `curl \| bash`, `sudo rm`, fork bombs |
-| `block-outside-workspace.sh` | Shell commands that redirect/write to absolute paths outside the workspace |
+**Why this and not the other blockers:** the cost of a leaked secret is high and often irreversible, and the false-positive rate is low (it only fires on commit/push). That asymmetry is exactly when a hard, deterministic block earns its keep. Extend the `PATTERNS` array for your own stack.
 
-**Honest limitation:** command blocklists are speed bumps, not walls. `rm -r -f` with odd spacing or `$(echo rm)` tricks can slip through. These catch the accidental `rm -rf /`, not a determined adversary. Treat them accordingly.
+**Honest limitation:** it's pattern-based. It catches common key shapes, not every possible secret.
 
-### Memory
+## The memory system (anti-sprawl)
 
-- `capture-correction.sh` (`UserPromptSubmit`): if your message looks like a correction ("no, don't", "wrong", "use X instead", "actually"), it appends a dated entry to `memory/memory.md`.
-- `inject-memory.sh` (`UserPromptSubmit`): keyword-matches your message against stored memory and prepends the most relevant entries (capped) so the agent sees them.
+The problem: over a long project the agent litters the repo with one-off markdown files, and they drift out of date. The fix is to give corrections a single home.
 
-Memory is intentionally plain Markdown you can read and edit by hand.
+- **`capture-correction.sh`** (`UserPromptSubmit`): when your message looks like a correction ("no, don't…", "use X instead", "actually always…"), it appends a dated, keyworded line to `memory/memory.md`. Questions and long pasted blocks are skipped; exact duplicates are deduped.
+- **`inject-memory.sh`** (`UserPromptSubmit`): tokenizes your message, scores each stored entry by keyword overlap, and prepends the top matches (default 3) into the agent's context. Unrelated messages inject nothing.
+
+One file. Plain text. You can read and hand-edit it. Tune with `MAI_MEMORY_MAX` (default 3) and `MAI_MEMORY_MIN_SCORE` (default 1).
+
+### Memory format
+
+```
+YYYY-MM-DD | keyword,comma,list | the correction text
+```
+
+See `memory/memory.example.md`. Your live `memory/memory.md` is git-ignored by default so corrections stay local — remove it from `.gitignore` if you want to publish your memory with the repo.
 
 ## Customize
 
 This is meant to be *yours*. Edit the scripts directly:
 
-- Add your own correction phrases to `capture-correction.sh`.
-- Tune the secret patterns in `block-secrets.sh` for your stack.
+- Add your own correction phrases in `capture-correction.sh`.
+- Tune the secret patterns in `block-secrets.sh`.
 - Raise/lower the injection cap in `inject-memory.sh`.
+
+## What this intentionally does NOT do
+
+- **No dangerous-command / outside-workspace blocking** — Kiro's built-in safety already pauses on those.
+- **No autonomous execution loop** — Kiro's subagent orchestration covers fresh-context, parallel, crash-resilient work without an external runner.
+- **No auto-promotion of memory into "rules", no semantic index** — add them only if the flat file stops being enough.
 
 ## License
 

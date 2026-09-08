@@ -66,12 +66,10 @@ JSON
   echo "    ✓ $dst"
 }
 
-# Enforcement gates — fire before shell tool use. Matcher targets the bash/execute tool.
+# Enforcement gate — fires before shell tool use. Matcher targets the bash/execute tool.
 BASH_MATCHER="(?i)(bash|shell|execute|command)"
 
-write_hook "block-secrets"   "mai-kiro: block secrets"           "PreToolUse" "$BASH_MATCHER" "block-secrets.sh"
-write_hook "block-dangerous" "mai-kiro: block dangerous commands" "PreToolUse" "$BASH_MATCHER" "block-dangerous.sh"
-write_hook "block-outside"   "mai-kiro: block writes outside workspace" "PreToolUse" "$BASH_MATCHER" "block-outside-workspace.sh"
+write_hook "block-secrets" "mai-kiro: block secrets" "PreToolUse" "$BASH_MATCHER" "block-secrets.sh"
 
 # Memory — fire on every user prompt.
 write_hook "inject-memory"      "mai-kiro: inject memory"      "UserPromptSubmit" "" "inject-memory.sh"
