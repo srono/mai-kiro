@@ -1,0 +1,10 @@
+# Personal memory is local by default — uncomment to publish it too.
+memory/memory.md
+
+# OS / editor cruft
+.DS_Store
+*.swp
+*~
+
+# Temp files used by hooks
+/tmp/mai-kiro-*
